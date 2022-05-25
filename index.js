@@ -1,4 +1,4 @@
-const { MongoClient, ServerApiVersion } = require('mongodb');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
 const express = require('express')
 const jwt = require('jsonwebtoken');
 const cors = require('cors')
@@ -13,6 +13,8 @@ app.use(cors())
 app.use(express.json());
 
 
+
+//==============================================Verify JWT  (TOken jodi thake tahole jwt kaj korbe otherwise kaj korbe na)
 
 function verifyJWT(req, res, next) {
 
@@ -62,19 +64,36 @@ const client = new MongoClient(uri, { useNewUrlParser: true, useUnifiedTopology:
 
 
 async function run() {
+
     try {
         await client.connect();
 
         const serviceCollection = client.db('doctors-portal').collection('services')
         const bookingCollection = client.db('doctors-portal').collection('bookings')
         const userCollection = client.db('doctors-portal').collection('users')
+        const doctorCollection = client.db('doctors_portal').collection('doctors');
 
+        //========================================== Verify Admin 
+
+        const verifyAdmin = async (req, res, next) => {
+
+            const requester = req.decoded.email;
+            const requesterAccount = await userCollection.findOne({ email: requester });
+            if (requesterAccount.role === 'admin') {
+                next();
+            }
+            else {
+                res.status(403).send({ message: 'forbidden' });
+            }
+        }
 
         //====================================== Get all service loading API
 
         app.get('/services', async (req, res) => {
             const query = {};
-            const services = await serviceCollection.find(query).toArray();
+            const cursor = serviceCollection.find(query).project({ name: 1 }) // puro API theke sudhu service er naam gulo neyar jonno project kore sei property ta nite hoy ... 1 dile property dibe 2 dile property dibe na
+            const services = await cursor.toArray();
+
             res.send(services)
         })
 
@@ -100,33 +119,21 @@ async function run() {
 
         })
 
-        //======================================= Make a admin API
+        //======================================= Make a admin API // this is admin update api
 
-        app.put('/user/admin/:email', verifyJWT, async (req, res) => {
+        app.put('/user/admin/:email', verifyJWT, verifyAdmin, async (req, res) => {
 
             const email = req.params.email;
-            const requester = req.decoded.email; // je onno user k admin banate chay  tar email neya hosche  
-            const requesterAccount = await userCollection.findOne({ email: requester }); // sei email diye sei user k khuje ber kora hosche 
+            const filter = { email: email };
+            const updateDoc = {
+                $set: { role: 'admin' }, //jake admin banabo ter property hisabe role:admin thakbe
+            };
 
-            if (requesterAccount.role === 'admin') { // admin requester user a jodi role property thake tahole se onno user k admin banate parbe
-
-                const filter = { email: email };
-                const updateDoc = {
-                    $set: { role: 'admin' },
-                };
-
-                const result = await userCollection.updateOne(filter, updateDoc);
-                res.send(result);
-
-            }
-
-            else {
-                res.status(403).send({ message: 'forbidden' });
-            }
-
+            const result = await userCollection.updateOne(filter, updateDoc);
+            res.send(result);
         });
 
-        //====================================New and old User checking api (JWT main API)
+        //====================================New and old User checking api (JWT implement  main API for useToken)
 
         app.put('/user/:email', async (req, res) => {
 
@@ -159,7 +166,7 @@ async function run() {
 
             //get all service-09
             const services = await serviceCollection.find().toArray();
-
+            console.log(services);
 
             //get the bookings of that day
             const query = { date: date };
@@ -168,7 +175,7 @@ async function run() {
 
             //for each service
             services.forEach(service => {
-
+                console.log(service);
                 // find serviceBookings for that service and bookings
                 const serviceBookings = bookings.filter(book => book.treatmentName === service.name)
 
@@ -188,6 +195,14 @@ async function run() {
             res.send(services)
         })
 
+        //============================================Payment route API
+
+        app.get('/booking/:id', async (req, res) => {
+            const id = req.params.id;
+            const query = { _id: ObjectId(id) };
+            const booking = await bookingCollection.findOne(query);
+            res.send(booking);
+        })
 
 
         //====================================== My Appointment API 
@@ -211,15 +226,15 @@ async function run() {
         })
 
 
-        // ================================== Booking Modal API  
+        // ================================== Booking Appointment Modal API  
 
         app.post('/booking', async (req, res) => {
 
             const booking = req.body;
+            console.log(booking);
 
-            //skip duplicate treatment for one user code start
 
-            const query = {
+            const query = { //skip duplicate treatment for one user code start
 
                 treatmentName: booking.treatmentName, // ekdin a ekta treatment neyar jonno date and patient check korte hobe
                 date: booking.date,
@@ -232,14 +247,47 @@ async function run() {
 
                 return res.send({ success: false, booking: exists })
 
-            }
-
-            //skip duplicate treatment for one user code end
+            }//skip duplicate treatment for one user code end
 
             const result = await bookingCollection.insertOne(booking);
+            console.log(result);
             return res.send({ success: true, result });
 
         })
+
+        //====================================Get all doctor
+
+        app.get('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
+            const doctors = await doctorCollection.find().toArray();
+            res.send(doctors);
+        })
+
+        //=================================== Add a Doctor API
+
+        app.post('/doctor', verifyJWT, verifyAdmin, async (req, res) => {
+
+            const doctor = req.body;
+            const result = await doctorCollection.insertOne(doctor);
+            res.send(result);
+
+        });
+
+        //======================================Delete API for a doctor
+
+        app.delete('/doctor/:email', verifyJWT, verifyAdmin, async (req, res) => {
+
+            const email = req.params.email;
+            const filter = { email: email };
+            const result = await doctorCollection.deleteOne(filter);
+            res.send(result);
+
+        })
+
+
+
+
+
+
     }
 
 
@@ -257,5 +305,5 @@ app.get('/', (req, res) => {
 })
 
 app.listen(port, () => {
-    console.log(`listening on port ${port}`)
+    console.log(`Server ok!! on port ${port}`)
 })
